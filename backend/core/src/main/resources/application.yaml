@@ -16,3 +16,8 @@ jwt:
   access-ttl-hours: 24
 server:
   port: 8080
+minio:
+  url: http://localhost:9000
+  access-key: smartedu
+  secret-key: smartedupass
+  bucket: smartedu-materials

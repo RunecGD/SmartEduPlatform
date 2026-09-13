@@ -19,7 +19,8 @@ public class UserDetailsServiceImpl implements UserDetailsService {
         return userRepository.findByEmail(email)
                 .map(user -> User.withUsername(user.getEmail())
                         .password(user.getPasswordHash())
-                        .authorities(user.getRole().name())
+                        .authorities("ROLE_" + user.getRole().name())
+                        .disabled(!Boolean.TRUE.equals(user.getIsEnabled()))
                         .build())
                 .orElseThrow(() -> new UsernameNotFoundException("Пользователь не найден"));
     }

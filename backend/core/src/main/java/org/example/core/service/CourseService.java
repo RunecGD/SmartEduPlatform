@@ -79,10 +79,6 @@ public class CourseService {
     }
 
 
-
-
-
-
     private User currentUser() {
         String email = SecurityContextHolder.getContext().getAuthentication().getName();
         return userRepository.findByEmail(email)
