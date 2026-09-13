@@ -14,7 +14,7 @@ import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.stereotype.Component;
@@ -253,7 +253,7 @@ public class ExamWebSocketAuthInterceptor
     ) {
 
         if (!(accessor.getUser()
-                instanceof org.springframework.security.core.Authentication authentication)) {
+                instanceof Authentication authentication)) {
             return false;
         }
 

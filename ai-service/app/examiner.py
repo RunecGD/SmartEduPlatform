@@ -43,17 +43,13 @@ def parse_json_response(response: str):
 
 
 def generate_exam(lesson_id: int, count: int = 5) -> list[dict]:
-    """Генерирует вопросы по материалам урока."""
-
     if not 1 <= count <= 20:
         raise ValueError("Количество вопросов должно быть от 1 до 20")
 
     chunks = get_random_chunks(lesson_id)
 
     if not chunks:
-        raise ValueError(
-            "Для этого урока нет проиндексированных материалов"
-        )
+        raise ValueError("Для этого урока нет проиндексированных материалов")
 
     context = "\n\n---\n\n".join(chunks)
 
@@ -64,13 +60,15 @@ def generate_exam(lesson_id: int, count: int = 5) -> list[dict]:
 сгенерируй {count} вопросов с открытым ответом.
 
 Требования:
-- вопросы должны проверять понимание материала;
-- не задавай вопросы, ответа на которые нет в материалах;
-- вопросы должны быть разными;
-- каждый вопрос должен иметь максимальный балл 10;
-- отвечай на русском языке.
+- каждый вопрос должен иметь однозначный смысл;
+- вопрос должен проверять понимание материала;
+- не используй информацию, которой нет в материале;
+- каждый вопрос оценивается максимум в 10 баллов;
+- не добавляй ответы на вопросы;
+- не добавляй пояснения;
+- верни результат СТРОГО в виде JSON-массива.
 
-Верни СТРОГО JSON-массив следующего формата:
+Формат ответа должен быть РОВНО таким:
 
 [
   {{
@@ -79,7 +77,7 @@ def generate_exam(lesson_id: int, count: int = 5) -> list[dict]:
   }}
 ]
 
-Фрагменты учебных материалов:
+Учебный материал:
 
 {context}
 """
@@ -91,17 +89,42 @@ def generate_exam(lesson_id: int, count: int = 5) -> list[dict]:
                 "model": settings.llm_model,
                 "prompt": prompt,
                 "stream": False,
-                "format": "json",
-                "options": {
-                    "temperature": 0.2,
+                "format": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question": {
+                                "type": "string"
+                            },
+                            "max_score": {
+                                "type": "integer"
+                            }
+                        },
+                        "required": [
+                            "question",
+                            "max_score"
+                        ]
+                    }
                 },
+                "options": {
+                    "temperature": 0.2
+                }
             },
         )
 
         response.raise_for_status()
 
     raw_response = response.json()["response"]
+
+    print("OLLAMA RESPONSE:")
+    print(raw_response)
+
     questions = parse_json_response(raw_response)
+
+
+    if isinstance(questions, dict):
+        questions = questions.get("questions", [])
 
     if not isinstance(questions, list):
         raise ValueError("LLM вернула не JSON-массив вопросов")
@@ -118,9 +141,16 @@ def generate_exam(lesson_id: int, count: int = 5) -> list[dict]:
         if not question:
             continue
 
+        try:
+            max_score = int(max_score)
+        except (TypeError, ValueError):
+            max_score = 10
+
+        max_score = max(1, min(max_score, 100))
+
         result.append({
             "question": str(question),
-            "max_score": int(max_score),
+            "max_score": max_score
         })
 
     if not result:

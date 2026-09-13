@@ -1,4 +1,6 @@
 import httpx
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -63,43 +65,53 @@ class GradeAttemptRequest(BaseModel):
 @app.post("/index")
 def index(req: IndexRequest):
     with engine.connect() as conn:
-        row = conn.execute(text("""
-            SELECT id, file_name, content_type
-            FROM materials
-            WHERE object_key = :ok
-        """), {
-            "ok": req.object_key
-        }).fetchone()
+        row = conn.execute(
+            text("""
+                SELECT id, file_name, content_type
+                FROM materials
+                WHERE object_key = :ok
+            """),
+            {"ok": req.object_key}
+        ).fetchone()
 
     if not row:
-        raise HTTPException(404, "Материал не найден")
+        raise HTTPException(
+            status_code=404,
+            detail="Материал не найден"
+        )
 
     try:
-        with httpx.Client(timeout=60) as client:
-            r = client.get(
-                f"{settings.minio_url}/"
-                f"{settings.minio_bucket}/"
-                f"{req.object_key}"
-            )
-            r.raise_for_status()
-            content = r.content
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=settings.minio_url,
+            aws_access_key_id=settings.minio_access_key,
+            aws_secret_access_key=settings.minio_secret_key,
+            region_name="us-east-1"
+        )
 
-    except httpx.HTTPError:
+        response = s3.get_object(
+            Bucket=settings.minio_bucket,
+            Key=req.object_key
+        )
+
+        content = response["Body"].read()
+
+    except (BotoCoreError, ClientError) as e:
         raise HTTPException(
-            502,
-            "Не удалось скачать файл из хранилища"
+            status_code=502,
+            detail=f"Не удалось скачать файл из хранилища: {e}"
         )
 
     count = index_material(
         row.id,
         content,
         row.content_type,
-        row.file_name,
+        row.file_name
     )
 
     return {
         "material_id": row.id,
-        "chunks_indexed": count,
+        "chunks_indexed": count
     }
 
 
@@ -158,4 +170,16 @@ def grade_exam_endpoint(req: GradeAttemptRequest):
         raise HTTPException(
             status_code=400,
             detail=str(e),
+        )
+
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Ошибка связи с Ollama: {e}",
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка проверки экзамена: {e}",
         )
