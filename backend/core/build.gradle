@@ -42,6 +42,7 @@ dependencies {
     implementation 'org.mapstruct:mapstruct:1.5.5.Final'
     implementation("io.minio:minio:8.5.12")
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
+    implementation 'org.springframework.boot:spring-boot-starter-restclient'
 }
 
 tasks.named('test') {

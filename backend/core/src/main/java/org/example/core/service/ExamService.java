@@ -9,10 +9,7 @@ import org.example.core.dto.request.AiGradeAttemptRequest;
 import org.example.core.dto.request.AiGradeQuestion;
 import org.example.core.dto.request.ExamAnswerRequest;
 import org.example.core.dto.request.ExamRequest;
-import org.example.core.dto.response.AiGradeResponse;
-import org.example.core.dto.response.AiQuestionResponse;
-import org.example.core.dto.response.ExamAnswerResponse;
-import org.example.core.dto.response.ExamAttemptResponse;
+import org.example.core.dto.response.*;
 import org.example.core.model.Course;
 import org.example.core.model.Exam;
 import org.example.core.model.ExamAnswer;
@@ -58,7 +55,7 @@ public class ExamService {
      * Преподаватель должен владеть курсом, которому принадлежит урок.
      */
     @Transactional
-    public Exam createExam(Long lessonId, ExamRequest request) {
+    public ExamResponse createExam(Long lessonId, ExamRequest request){
 
         Lesson lesson = lessonRepository.findById(lessonId)
                 .orElseThrow(() ->
@@ -83,7 +80,14 @@ public class ExamService {
                 .timeLimitMinutes(request.timeLimitMinutes())
                 .build();
 
-        return examRepository.save(exam);
+        Exam saved = examRepository.save(exam);
+
+        return new ExamResponse(
+                saved.getId(),
+                lessonId,
+                saved.getTitle(),
+                saved.getTimeLimitMinutes()
+        );
     }
 
     /**
@@ -93,8 +97,7 @@ public class ExamService {
      * новыми вопросами, полученными от Python-сервиса.
      */
     @Transactional
-    public List<ExamQuestion> generateQuestions(Long examId) {
-
+    public List<ExamQuestionResponse> generateQuestions(Long examId){
         Exam exam = examRepository.findById(examId)
                 .orElseThrow(() ->
                         new EntityNotFoundException("Экзамен не найден"));
@@ -104,7 +107,7 @@ public class ExamService {
         List<AiQuestionResponse> generated =
                 aiServiceClient.generateExam(
                         exam.getLesson().getId(),
-                        5
+                        1
                 );
 
         if (generated == null || generated.isEmpty()) {
@@ -148,15 +151,24 @@ public class ExamService {
                     "AI-сервис вернул некорректные вопросы");
         }
 
-        return examQuestionRepository.saveAll(questions);
+        List<ExamQuestion> savedQuestions =
+                examQuestionRepository.saveAll(questions);
+
+        return savedQuestions.stream()
+                .map(question -> new ExamQuestionResponse(
+                        question.getId(),
+                        question.getQuestionText(),
+                        question.getMaxScore(),
+                        question.getOrderIndex()
+                ))
+                .toList();
     }
 
     /**
      * Старт экзамена студентом.
      */
     @Transactional
-    public ExamAttempt startAttempt(Long examId) {
-
+    public ExamAttemptResponse startAttempt(Long examId){
         User user = currentUser();
 
         Exam exam = examRepository.findById(examId)
@@ -193,8 +205,10 @@ public class ExamService {
                 .status(AttemptStatus.IN_PROGRESS)
                 .build();
 
-        return examAttemptRepository.save(attempt);
-    }
+        ExamAttempt saved =
+                examAttemptRepository.save(attempt);
+
+        return toResponse(saved);    }
 
     /**
      * Отправка ответов студента.

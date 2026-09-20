@@ -1,239 +1,295 @@
 import json
-import re
 
-import httpx
+from openai import OpenAI
 from sqlalchemy import text
 
 from app.config import settings
 from app.db import engine
 
 
-def get_random_chunks(lesson_id: int, limit: int = 10) -> list[str]:
-    """Получает случайные фрагменты материалов конкретного урока."""
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=settings.openrouter_api_key,
+)
+
+
+def get_random_chunks(
+    lesson_id: int,
+    limit: int = 5,
+) -> list[str]:
+
     with engine.connect() as conn:
-        rows = conn.execute(text("""
-            SELECT mc.content
-            FROM material_chunks mc
-            JOIN materials m ON m.id = mc.material_id
-            WHERE m.lesson_id = :lesson_id
-            ORDER BY random()
-            LIMIT :limit
-        """), {
-            "lesson_id": lesson_id,
-            "limit": limit,
-        }).fetchall()
+        rows = conn.execute(
+            text("""
+                SELECT mc.content
+                FROM material_chunks mc
+                JOIN materials m
+                    ON m.id = mc.material_id
+                WHERE m.lesson_id = :lesson_id
+                ORDER BY random()
+                LIMIT :limit
+            """),
+            {
+                "lesson_id": lesson_id,
+                "limit": limit,
+            },
+        ).fetchall()
 
     return [row.content for row in rows]
 
 
-def parse_json_response(response: str):
-    """Извлекает JSON, даже если LLM обернула его в ```json ... ```."""
-    response = response.strip()
+def generate_exam(
+    lesson_id: int,
+    count: int = 5,
+) -> list[dict]:
 
-    match = re.search(
-        r"```(?:json)?\s*(.*?)\s*```",
-        response,
-        flags=re.DOTALL | re.IGNORECASE,
+    if not 1 <= count <= 20:
+        raise ValueError(
+            "Количество вопросов должно быть от 1 до 20"
+        )
+
+    chunks = get_random_chunks(
+        lesson_id=lesson_id,
+        limit=5,
     )
 
-    if match:
-        response = match.group(1).strip()
-
-    return json.loads(response)
-
-
-def generate_exam(lesson_id: int, count: int = 5) -> list[dict]:
-    if not 1 <= count <= 20:
-        raise ValueError("Количество вопросов должно быть от 1 до 20")
-
-    chunks = get_random_chunks(lesson_id)
-
     if not chunks:
-        raise ValueError("Для этого урока нет проиндексированных материалов")
+        raise ValueError(
+            "Для этого урока нет проиндексированных материалов"
+        )
 
     context = "\n\n---\n\n".join(chunks)
 
-    prompt = f"""
+    response = client.chat.completions.create(
+        model=settings.openrouter_model,
+
+        messages=[
+            {
+                "role": "system",
+                "content": """
 Ты — преподаватель образовательной платформы.
 
-Используя ТОЛЬКО приведённые ниже фрагменты учебных материалов,
-сгенерируй {count} вопросов с открытым ответом.
+Используй ТОЛЬКО предоставленный учебный материал.
+
+Сгенерируй вопросы с открытым ответом.
 
 Требования:
-- каждый вопрос должен иметь однозначный смысл;
-- вопрос должен проверять понимание материала;
+- вопросы должны проверять понимание материала;
 - не используй информацию, которой нет в материале;
 - каждый вопрос оценивается максимум в 10 баллов;
 - не добавляй ответы на вопросы;
-- не добавляй пояснения;
-- верни результат СТРОГО в виде JSON-массива.
-
-Формат ответа должен быть РОВНО таким:
-
-[
-  {{
-    "question": "Текст вопроса",
-    "max_score": 10
-  }}
-]
+- верни только JSON.
+""",
+            },
+            {
+                "role": "user",
+                "content": f"""
+Сгенерируй {count} вопросов.
 
 Учебный материал:
 
 {context}
-"""
-
-    with httpx.Client(timeout=180) as client:
-        response = client.post(
-            f"{settings.ollama_url}/api/generate",
-            json={
-                "model": settings.llm_model,
-                "prompt": prompt,
-                "stream": False,
-                "format": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "question": {
-                                "type": "string"
-                            },
-                            "max_score": {
-                                "type": "integer"
-                            }
-                        },
-                        "required": [
-                            "question",
-                            "max_score"
-                        ]
-                    }
-                },
-                "options": {
-                    "temperature": 0.2
-                }
+""",
             },
+        ],
+
+        temperature=0.2,
+
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "exam_questions",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "questions": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "question": {
+                                        "type": "string"
+                                    },
+                                    "max_score": {
+                                        "type": "integer"
+                                    },
+                                },
+                                "required": [
+                                    "question",
+                                    "max_score",
+                                ],
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                    "required": [
+                        "questions"
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+        },
+    )
+
+    content = response.choices[0].message.content
+
+    if not content:
+        raise ValueError(
+            "OpenRouter не вернул ответ"
         )
 
-        response.raise_for_status()
+    data = json.loads(content)
 
-    raw_response = response.json()["response"]
-
-    print("OLLAMA RESPONSE:")
-    print(raw_response)
-
-    questions = parse_json_response(raw_response)
-
-
-    if isinstance(questions, dict):
-        questions = questions.get("questions", [])
-
-    if not isinstance(questions, list):
-        raise ValueError("LLM вернула не JSON-массив вопросов")
+    questions = data["questions"]
 
     result = []
 
     for item in questions:
-        if not isinstance(item, dict):
-            continue
 
         question = item.get("question")
-        max_score = item.get("max_score", 10)
 
         if not question:
             continue
 
         try:
-            max_score = int(max_score)
+            max_score = int(
+                item.get("max_score", 10)
+            )
         except (TypeError, ValueError):
             max_score = 10
 
-        max_score = max(1, min(max_score, 100))
+        max_score = max(
+            1,
+            min(max_score, 100),
+        )
 
-        result.append({
-            "question": str(question),
-            "max_score": max_score
-        })
+        result.append(
+            {
+                "question": str(question),
+                "max_score": max_score,
+            }
+        )
 
     if not result:
-        raise ValueError("LLM не вернула корректных вопросов")
+        raise ValueError(
+            "OpenRouter не вернул корректных вопросов"
+        )
 
     return result
 
 
-def grade_attempt(answers: list[dict]) -> list[dict]:
-    """Проверяет ответы студента с помощью LLM."""
+def grade_attempt(
+    answers: list[dict],
+) -> list[dict]:
 
     results = []
 
-    with httpx.Client(timeout=180) as client:
+    for item in answers:
 
-        for item in answers:
-            question_id = item["question_id"]
-            question = item["question"]
-            max_score = int(item["max_score"])
-            student_answer = item["answer_text"]
-            chunks = item.get("chunks", [])
+        question_id = item["question_id"]
+        question = item["question"]
+        max_score = int(item["max_score"])
+        student_answer = item["answer_text"]
 
-            context = "\n\n---\n\n".join(chunks)
+        chunks = item.get("chunks", [])
 
-            prompt = f"""
+        context = "\n\n---\n\n".join(chunks)
+
+        response = client.chat.completions.create(
+            model=settings.openrouter_model,
+
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
 Ты — проверяющий преподаватель.
 
-Оцени ответ студента на основе вопроса и учебного материала.
+Оцени ответ студента ТОЛЬКО на основе
+вопроса и предоставленного учебного материала.
 
-Важно:
-- используй ТОЛЬКО информацию из учебного материала;
-- не требуй от студента формулировки слово в слово;
+Правила:
 - учитывай смысл ответа;
-- если ответ частично правильный — поставь частичный балл;
-- если ответ полностью неправильный — поставь 0;
-- максимальный балл: {max_score};
+- не требуй дословного совпадения;
+- полностью правильный ответ получает максимальный балл;
+- частично правильный ответ получает частичный балл;
+- неправильный ответ получает 0;
 - укажи ошибки или недостающую информацию;
-- отвечай на русском языке.
-
-Верни СТРОГО JSON:
-
-{{
-  "score": 7,
-  "feedback": "Ответ в целом правильный, но..."
-}}
-
+- отвечай на русском языке;
+- верни только JSON.
+""",
+                },
+                {
+                    "role": "user",
+                    "content": f"""
 Вопрос:
 {question}
+
+Максимальный балл:
+{max_score}
 
 Учебный материал:
 {context}
 
 Ответ студента:
 {student_answer}
-"""
+""",
+                },
+            ],
 
-            response = client.post(
-                f"{settings.ollama_url}/api/generate",
-                json={
-                    "model": settings.llm_model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "format": "json",
-                    "options": {
-                        "temperature": 0.1,
+            temperature=0.1,
+
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "grade_result",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "score": {
+                                "type": "integer"
+                            },
+                            "feedback": {
+                                "type": "string"
+                            },
+                        },
+                        "required": [
+                            "score",
+                            "feedback",
+                        ],
+                        "additionalProperties": False,
                     },
                 },
+            },
+        )
+
+        content = response.choices[0].message.content
+
+        if not content:
+            raise ValueError(
+                "OpenRouter не вернул результат проверки"
             )
 
-            response.raise_for_status()
+        data = json.loads(content)
 
-            raw_response = response.json()["response"]
-            data = parse_json_response(raw_response)
+        score = int(
+            data.get("score", 0)
+        )
 
-            score = int(data.get("score", 0))
+        score = max(
+            0,
+            min(score, max_score),
+        )
 
-            # Защита от некорректного ответа LLM
-            score = max(0, min(score, max_score))
-
-            results.append({
+        results.append(
+            {
                 "question_id": question_id,
                 "score": score,
-                "feedback": str(data.get("feedback", "")),
-            })
+                "feedback": str(
+                    data.get("feedback", "")
+                ),
+            }
+        )
 
     return results

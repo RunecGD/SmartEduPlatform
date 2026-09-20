@@ -1,5 +1,6 @@
 package org.example.core.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -58,6 +59,7 @@ public class Lesson {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    @JsonIgnore
     @OneToMany(mappedBy = "lesson")
     private List<LessonProgress> progress = new ArrayList<>();
 

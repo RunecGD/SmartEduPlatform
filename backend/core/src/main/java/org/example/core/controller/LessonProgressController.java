@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.*;
 public class LessonProgressController {
 
     private final LessonProgressService lessonProgressService;
-    @PostMapping("/{lessonId}/complete")
+    @PostMapping("/complete")
     @PreAuthorize("hasRole('STUDENT')")
     public LessonProgressResponse complete(@PathVariable Long lessonId,
                                            @Valid @RequestBody LessonProgressRequest req) {

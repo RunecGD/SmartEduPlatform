@@ -1,5 +1,6 @@
 package org.example.core.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -19,6 +20,7 @@ public class ExamQuestion {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "exam_id", nullable = false)
     private Exam exam;
@@ -34,6 +36,7 @@ public class ExamQuestion {
     @Column(name = "order_index", nullable = false)
     private Integer orderIndex = 0;
 
+    @JsonIgnore
     @OneToMany(mappedBy = "question")
     @Builder.Default
     private List<ExamAnswer> answers = new ArrayList<>();

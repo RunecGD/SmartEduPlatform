@@ -4,13 +4,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
-        extra="ignore"
+        extra="ignore",
     )
 
     db_url: str
 
-    ollama_url: str = "http://localhost:11434"
-    llm_model: str = "llama3.1:8b"
+    openrouter_api_key: str
+    openrouter_model: str = "openai/gpt-oss-20b"
+
     embed_model: str = "nomic-embed-text"
 
     minio_url: str = "http://localhost:9000"
