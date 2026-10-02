@@ -13,9 +13,7 @@ services:
     - smartedu
     restart: unless-stopped
     healthcheck:
-      test:
-      - CMD-SHELL
-      - pg_isready -U postgres -d smartedu
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d smartedu" ]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -40,11 +38,7 @@ services:
     - smartedu
     restart: unless-stopped
     healthcheck:
-      test:
-      - CMD
-      - rabbitmq-diagnostics
-      - -q
-      - ping
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
       interval: 10s
       timeout: 10s
       retries: 20
@@ -179,6 +173,26 @@ services:
         condition: service_completed_successfully
       core:
         condition: service_started
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "127.0.0.1:4173:80"
+    depends_on:
+      core:
+        condition: service_started
+      notification-service:
+        condition: service_started
+      code-execution-service:
+        condition: service_started
+    networks:
+      - smartedu
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
   ollama:
     image: ollama/ollama:latest
     volumes:
