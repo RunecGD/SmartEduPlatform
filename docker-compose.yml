@@ -1,0 +1,223 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: smartedu
+    ports:
+    - 127.0.0.1:5432:5432
+    volumes:
+    - pgdata:/var/lib/postgresql/data
+    networks:
+    - smartedu
+    restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U postgres -d smartedu
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  mongodb:
+    image: mongo:8
+    ports:
+    - 127.0.0.1:27017:27017
+    volumes:
+    - mongodata:/data/db
+    networks:
+    - smartedu
+    restart: unless-stopped
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: smartedu
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD}
+    ports:
+    - 127.0.0.1:5672:5672
+    - 127.0.0.1:15672:15672
+    networks:
+    - smartedu
+    restart: unless-stopped
+    healthcheck:
+      test:
+      - CMD
+      - rabbitmq-diagnostics
+      - -q
+      - ping
+      interval: 10s
+      timeout: 10s
+      retries: 20
+  minio:
+    image: pgsty/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: smartedu
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY}
+    ports:
+    - 127.0.0.1:9000:9000
+    - 127.0.0.1:9001:9001
+    volumes:
+    - miniodata:/data
+    networks:
+    - smartedu
+    restart: unless-stopped
+  ai-service:
+    build:
+      context: ./ai-service
+    environment:
+      DB_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/smartedu
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?Set OPENROUTER_API_KEY}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-oss-20b}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?Set AI_SERVICE_TOKEN}
+      MINIO_URL: http://minio:9000
+      MINIO_ACCESS_KEY: smartedu
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY}
+      MINIO_BUCKET: smartedu-materials
+      OLLAMA_URL: http://ollama:11434
+      EMBEDDING_DIMENSIONS: 768
+      EMBED_MODEL: nomic-embed-text
+    ports:
+    - 127.0.0.1:8000:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      ollama-init:
+        condition: service_completed_successfully
+    networks:
+    - smartedu
+    restart: unless-stopped
+  core:
+    build:
+      context: ./backend/core
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      ai-service:
+        condition: service_started
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/smartedu
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: smartedu
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD}
+      AI_SERVICE_URL: http://ai-service:8000
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?Set AI_SERVICE_TOKEN}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET}
+      MINIO_URL: http://minio:9000
+      MINIO_PUBLIC_URL: http://localhost:9000
+      MINIO_ACCESS_KEY: smartedu
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY}
+      MINIO_BUCKET: smartedu-materials
+      APP_CORS_ORIGINS: http://localhost:8088,http://localhost:4173,http://localhost:5173
+      SPRING_RABBITMQ_PUBLISHER_CONFIRM_TYPE: correlated
+      SPRING_RABBITMQ_PUBLISHER_RETURNS: 'true'
+      SPRING_RABBITMQ_TEMPLATE_MANDATORY: 'true'
+      SPRING_TASK_SCHEDULING_POOL_SIZE: 3
+      SPRING_DOCKER_COMPOSE_ENABLED: 'false'
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    ports:
+    - 127.0.0.1:8080:8080
+    networks:
+    - smartedu
+    restart: unless-stopped
+  notification-service:
+    build:
+      context: ./backend/notification-service
+    depends_on:
+      mongodb:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      core:
+        condition: service_started
+    environment:
+      CORE_SERVICE_URL: http://core:8080
+      APP_CORS_ORIGINS: http://localhost:8088,http://localhost:4173,http://localhost:5173
+      SPRING_RABBITMQ_LISTENER_SIMPLE_DEFAULT_REQUEUE_REJECTED: 'false'
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: smartedu
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD}
+      SPRING_DOCKER_COMPOSE_ENABLED: 'false'
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD}
+      SPRING_MONGODB_URI: mongodb://mongodb:27017/smartedu_notifications
+    ports:
+    - 127.0.0.1:8081:8081
+    networks:
+    - smartedu
+    restart: unless-stopped
+  code-execution-service:
+    build:
+      context: ./backend/code-execution-service
+    environment:
+      SPRING_DOCKER_COMPOSE_ENABLED: 'false'
+      CORE_SERVICE_URL: http://core:8080
+      APP_CORS_ORIGINS: http://localhost:8088,http://localhost:4173,http://localhost:5173
+      CODE_EXECUTION_WORK_DIR: /var/lib/smartedu-executions
+      CODE_EXECUTION_HOST_WORK_DIR: ${CODE_EXECUTION_HOST_WORK_DIR:?Set absolute host
+        work directory}
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    - ${CODE_EXECUTION_HOST_WORK_DIR:?Set absolute host work directory}:/var/lib/smartedu-executions
+    ports:
+    - 127.0.0.1:8082:8082
+    networks:
+    - smartedu
+    restart: unless-stopped
+    depends_on:
+      execution-images:
+        condition: service_completed_successfully
+      core:
+        condition: service_started
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+    - ollamadata:/root/.ollama
+    networks:
+    - smartedu
+    restart: unless-stopped
+  ollama-init:
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - until ollama list >/dev/null 2>&1; do sleep 2; done; ollama pull nomic-embed-text
+    depends_on:
+      ollama:
+        condition: service_started
+    networks:
+    - smartedu
+    restart: on-failure
+  execution-images:
+    image: docker:cli
+    entrypoint:
+    - /bin/sh
+    - -c
+    command:
+    - docker pull python:3.13-alpine && docker pull eclipse-temurin:25-jdk-alpine
+      && docker pull gcc:15
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    restart: on-failure
+networks:
+  smartedu:
+    driver: bridge
+volumes:
+  pgdata: null
+  mongodata: null
+  miniodata: null
+  ollamadata: null
+name: smartedu-local

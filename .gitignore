@@ -1,0 +1,7 @@
+.env
+execution-work/
+**/node_modules/
+**/dist/
+**/build/
+**/.gradle/
+**/__pycache__/
