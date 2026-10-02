@@ -111,7 +111,7 @@ services:
       MINIO_ACCESS_KEY: smartedu
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY}
       MINIO_BUCKET: smartedu-materials
-      APP_CORS_ORIGINS: http://localhost:8088,http://localhost:4173,http://localhost:5173
+      APP_CORS_ORIGINS: http://localhost:8088,http://localhost:4173,http://localhost:5173,http://127.0.0.1:4173
       SPRING_RABBITMQ_PUBLISHER_CONFIRM_TYPE: correlated
       SPRING_RABBITMQ_PUBLISHER_RETURNS: 'true'
       SPRING_RABBITMQ_TEMPLATE_MANDATORY: 'true'

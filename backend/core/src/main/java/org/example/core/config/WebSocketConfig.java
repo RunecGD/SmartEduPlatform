@@ -10,7 +10,7 @@ import org.springframework.web.socket.config.annotation.*;
 @RequiredArgsConstructor
 public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final ExamWebSocketAuthInterceptor examWebSocketAuthInterceptor;
-    @Value("${app.cors-origins:http://localhost:4173,http://localhost:5173}")
+    @Value("${app.cors-origins:http://localhost:4173,http://localhost:5173,http://127.0.0.1:4173}")
     private String origins;
     @Override public void configureMessageBroker(MessageBrokerRegistry registry) {
         registry.enableSimpleBroker("/topic");
