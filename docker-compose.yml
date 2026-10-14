@@ -13,10 +13,15 @@ services:
     - smartedu
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres -d smartedu" ]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d smartedu"]
       interval: 5s
       timeout: 5s
       retries: 20
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
   mongodb:
     image: mongo:8
     ports:
@@ -26,6 +31,11 @@ services:
     networks:
     - smartedu
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
   rabbitmq:
     image: rabbitmq:3-management-alpine
     environment:
@@ -38,15 +48,20 @@ services:
     - smartedu
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 10s
       retries: 20
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
   minio:
     image: pgsty/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: smartedu
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY}
     ports:
     - 127.0.0.1:9000:9000
@@ -56,18 +71,23 @@ services:
     networks:
     - smartedu
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
   ai-service:
     build:
       context: ./ai-service
     environment:
-      DB_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/smartedu
+      DB_URL: ${DB_URL:?Set DB_URL}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?Set OPENROUTER_API_KEY}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-oss-20b}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?Set AI_SERVICE_TOKEN}
       MINIO_URL: http://minio:9000
-      MINIO_ACCESS_KEY: smartedu
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY}
-      MINIO_BUCKET: smartedu-materials
+      MINIO_BUCKET: ${MINIO_BUCKET:?Set MINIO_BUCKET}
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_DIMENSIONS: 768
       EMBED_MODEL: nomic-embed-text
@@ -83,6 +103,11 @@ services:
     networks:
     - smartedu
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
   core:
     build:
       context: ./backend/core
@@ -107,11 +132,11 @@ services:
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?Set AI_SERVICE_TOKEN}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET}
       MINIO_URL: http://minio:9000
-      MINIO_PUBLIC_URL: http://localhost:9000
-      MINIO_ACCESS_KEY: smartedu
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY}
-      MINIO_BUCKET: smartedu-materials
-      APP_CORS_ORIGINS: http://localhost:8088,http://localhost:4173,http://localhost:5173,http://127.0.0.1:4173
+      MINIO_BUCKET: ${MINIO_BUCKET:?Set MINIO_BUCKET}
+      APP_CORS_ORIGINS: ${APP_CORS_ORIGINS:?Set APP_CORS_ORIGINS}
       SPRING_RABBITMQ_PUBLISHER_CONFIRM_TYPE: correlated
       SPRING_RABBITMQ_PUBLISHER_RETURNS: 'true'
       SPRING_RABBITMQ_TEMPLATE_MANDATORY: 'true'
@@ -124,6 +149,11 @@ services:
     networks:
     - smartedu
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
   notification-service:
     build:
       context: ./backend/notification-service
@@ -136,7 +166,7 @@ services:
         condition: service_started
     environment:
       CORE_SERVICE_URL: http://core:8080
-      APP_CORS_ORIGINS: http://localhost:8088,http://localhost:4173,http://localhost:5173
+      APP_CORS_ORIGINS: ${APP_CORS_ORIGINS:?Set APP_CORS_ORIGINS}
       SPRING_RABBITMQ_LISTENER_SIMPLE_DEFAULT_REQUEUE_REJECTED: 'false'
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_PORT: 5672
@@ -150,19 +180,32 @@ services:
     networks:
     - smartedu
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
   code-execution-service:
     build:
       context: ./backend/code-execution-service
     environment:
       SPRING_DOCKER_COMPOSE_ENABLED: 'false'
       CORE_SERVICE_URL: http://core:8080
-      APP_CORS_ORIGINS: http://localhost:8088,http://localhost:4173,http://localhost:5173
+      APP_CORS_ORIGINS: ${APP_CORS_ORIGINS:?Set APP_CORS_ORIGINS}
       CODE_EXECUTION_WORK_DIR: /var/lib/smartedu-executions
-      CODE_EXECUTION_HOST_WORK_DIR: ${CODE_EXECUTION_HOST_WORK_DIR:?Set absolute host
-        work directory}
+      CODE_EXECUTION_HOST_WORK_DIR: ${CODE_EXECUTION_HOST_WORK_DIR:?Set absolute host work directory}
+      DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
-    - /var/run/docker.sock:/var/run/docker.sock
-    - ${CODE_EXECUTION_HOST_WORK_DIR:?Set absolute host work directory}:/var/lib/smartedu-executions
+    - type: bind
+      source: /var/run/docker.sock
+      target: /var/run/docker.sock
+      bind:
+        create_host_path: false
+    - type: bind
+      source: ${CODE_EXECUTION_HOST_WORK_DIR:?Set absolute host work directory}
+      target: /var/lib/smartedu-executions
+      bind:
+        create_host_path: false
     ports:
     - 127.0.0.1:8082:8082
     networks:
@@ -173,11 +216,16 @@ services:
         condition: service_completed_successfully
       core:
         condition: service_started
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
   frontend:
     build:
       context: ./frontend
     ports:
-      - "127.0.0.1:4173:80"
+    - 127.0.0.1:4173:80
     depends_on:
       core:
         condition: service_started
@@ -186,13 +234,13 @@ services:
       code-execution-service:
         condition: service_started
     networks:
-      - smartedu
+    - smartedu
     restart: unless-stopped
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: 10m
+        max-file: '3'
   ollama:
     image: ollama/ollama:latest
     volumes:
@@ -200,6 +248,11 @@ services:
     networks:
     - smartedu
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
   ollama-init:
     image: ollama/ollama:latest
     environment:
@@ -221,8 +274,7 @@ services:
     - /bin/sh
     - -c
     command:
-    - docker pull python:3.13-alpine && docker pull eclipse-temurin:25-jdk-alpine
-      && docker pull gcc:15
+    - docker pull python:3.13-alpine && docker pull eclipse-temurin:25-jdk-alpine && docker pull gcc:15
     volumes:
     - /var/run/docker.sock:/var/run/docker.sock
     restart: on-failure
