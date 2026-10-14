@@ -2,7 +2,7 @@ import { z } from 'zod';
 export const roleSchema = z.enum(['STUDENT','TEACHER','METHODIST','ADMIN']);
 export const courseStatusSchema = z.enum(['DRAFT','PUBLISHED','ARCHIVED']);
 export const lessonTypeSchema = z.enum(['TEXT','VIDEO','QUIZ','CODE']);
-export const attemptStatusSchema = z.enum(['IN_PROGRESS','FINISHED','EXPIRED']);
+export const attemptStatusSchema = z.enum(['IN_PROGRESS','SUBMITTED','FINISHED','EXPIRED']);
 const id = z.number().int().safe();
 const text = z.string().nullable();
 const integer = z.number().int().nullable();
@@ -19,7 +19,7 @@ export const examSchema = z.object({id,lessonId:id,title:text,timeLimitMinutes:i
 export const examQuestionSchema = z.object({id,question:text,maxScore:integer,orderIndex:integer});
 export const examAnswerSchema = z.object({questionId:id,question:text,answer:text,score:integer,feedback:text,maxScore:integer});
 // These DTOs declare String status, not AttemptStatus. Retain unknown future strings safely.
-export const examAttemptSchema = z.object({attemptId:id,examId:id,startedAt:timestamp,finishedAt:timestamp,totalScore:integer,status:z.string(),answers:z.array(examAnswerSchema).nullable()});
+export const examAttemptSchema = z.object({attemptId:id,examId:id,startedAt:timestamp,finishedAt:timestamp,totalScore:integer,status:z.string(),answers:z.array(examAnswerSchema).nullable(),canReview:z.boolean().optional().default(false)});
 export const examProgressSchema = z.object({examId:id,examTitle:text,score:integer,status:z.string()});
 export const examWebSocketSchema = z.object({attemptId:id,status:z.string(),remainingSeconds:z.number().int(),startedAt:timestamp,deadline:timestamp});
 export const forumPostSchema = z.object({id,topicId:id,authorId:id,authorName:text,content:z.string(),createdAt:timestamp});
@@ -58,3 +58,4 @@ export type AskResponse = z.infer<typeof askSchema>;
 export type AiGradeResponse = z.infer<typeof aiGradeSchema>;
 export type AiQuestionResponse = z.infer<typeof aiQuestionSchema>;
 export type ApiErrorResponse = z.infer<typeof apiErrorSchema>;
+

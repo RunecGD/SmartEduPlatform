@@ -11,6 +11,8 @@ import java.util.Optional;
 @Repository
 public interface ExamAttemptRepository extends JpaRepository<ExamAttempt, Long> {
 
+    Optional<ExamAttempt> findFirstByExamIdAndUserIdOrderByStartedAtDescIdDesc(Long examId, Long userId);
+
     boolean existsByExamIdAndUserIdAndStatus(
             Long examId,
             Long userId,

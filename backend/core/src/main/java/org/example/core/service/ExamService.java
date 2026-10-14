@@ -192,41 +192,21 @@ public class ExamService {
                 || !enrollmentRepository.existsByUserIdAndCourseId(user.getId(), course.getId())) {
             throw new AccessDeniedException("Необходима запись на опубликованный курс");
         }
-        for (ExamAttempt active : examAttemptRepository.findByUser_Id(user.getId())) {
-            if (active.getExam().getId().equals(examId) && active.getStatus() == AttemptStatus.IN_PROGRESS) {
-                entityManager.lock(active, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
-                entityManager.refresh(active);
-                if (active.getStatus() == AttemptStatus.IN_PROGRESS && isExpired(active)) {
-                    active.setStatus(AttemptStatus.EXPIRED);
-                    active.setFinishedAt(Instant.now());
-                    examAttemptRepository.save(active);
-                }
+        // The exam lock serializes starts, including simultaneous browser requests.
+        var previous = examAttemptRepository.findFirstByExamIdAndUserIdOrderByStartedAtDescIdDesc(examId, user.getId());
+        if (previous.isPresent()) {
+            ExamAttempt existing = previous.get();
+            entityManager.lock(existing, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+            entityManager.refresh(existing);
+            if (existing.getStatus() == AttemptStatus.IN_PROGRESS && isExpired(existing)) {
+                existing.setStatus(AttemptStatus.EXPIRED);
+                existing.setFinishedAt(Instant.now());
+                examAttemptRepository.save(existing);
             }
+            return toResponse(existing);
         }
-
-        List<ExamQuestion> questions =
-                examQuestionRepository.findByExamIdOrderByOrderIndexAsc(
-                        examId
-                );
-
-        if (questions.isEmpty()) {
-            throw new IllegalStateException(
-                    "Нельзя начать экзамен без вопросов"
-            );
-        }
-
-        boolean hasActiveAttempt =
-                examAttemptRepository
-                        .existsByExamIdAndUserIdAndStatus(
-                                examId,
-                                user.getId(),
-                                AttemptStatus.IN_PROGRESS
-                        );
-
-        if (hasActiveAttempt) {
-            return examAttemptRepository.findByUser_Id(user.getId()).stream()
-                .filter(a -> a.getExam().getId().equals(examId) && a.getStatus()==AttemptStatus.IN_PROGRESS)
-                .findFirst().map(this::toResponse).orElseThrow();
+        if (examQuestionRepository.findByExamIdOrderByOrderIndexAsc(examId).isEmpty()) {
+            throw new IllegalStateException("Нельзя начать экзамен без вопросов");
         }
 
         ExamAttempt attempt = ExamAttempt.builder()
@@ -298,146 +278,122 @@ public class ExamService {
                 questions
         );
 
-        List<String> chunks =
-                getLessonChunks(
-                        exam.getLesson().getId()
-                );
-
-        if (chunks.isEmpty()) {
-            throw new IllegalStateException(
-                    "Для проверки экзамена нет проиндексированных материалов"
-            );
-        }
-
-        List<AiGradeQuestion> aiQuestions =
-                new ArrayList<>();
-
-        List<ExamAnswerRequest> aiAnswers =
-                new ArrayList<>();
-
-        for (ExamQuestion question : questions) {
-
-            aiQuestions.add(
-                    new AiGradeQuestion(
-                            question.getId(),
-                            question.getQuestionText(),
-                            question.getMaxScore(),
-                            chunks
-                    )
-            );
-
-            aiAnswers.add(
-                    new ExamAnswerRequest(
-                            question.getId(),
-                            submittedAnswers.getOrDefault(
-                                    question.getId(),
-                                    ""
-                            )
-                    )
-            );
-        }
-
-        AiGradeAttemptRequest aiRequest =
-                new AiGradeAttemptRequest(
-                        aiQuestions,
-                        aiAnswers
-                );
-
-        List<AiGradeResponse> grades =
-                aiServiceClient.gradeAttempt(aiRequest);
-
-        if (grades == null) {
-            throw new IllegalStateException(
-                    "AI-сервис не вернул результаты проверки"
-            );
-        }
-
-        Map<Long, AiGradeResponse> gradesByQuestionId =
-                new HashMap<>();
-
-        for (AiGradeResponse grade : grades) {
-
-            if (grade == null || grade.questionId() == null) {
-                continue;
-            }
-
-            if (gradesByQuestionId.containsKey(grade.questionId())
-                    || questions.stream().noneMatch(q -> q.getId().equals(grade.questionId()))) {
-                throw new IllegalStateException("AI вернул дублирующийся или посторонний вопрос");
-            }
-            gradesByQuestionId.put(
-                    grade.questionId(),
-                    grade
-            );
-        }
-
-        for (ExamQuestion question : questions) {
-
-            if (!gradesByQuestionId.containsKey(question.getId())) {
-                throw new IllegalStateException(
-                        "AI-сервис не проверил вопрос: "
-                                + question.getId()
-                );
-            }
-        }
-
         if (attempt.getAnswers() == null) attempt.setAnswers(new ArrayList<>());
-        attempt.getAnswers().clear();
-
-        int totalScore = 0;
-
         for (ExamQuestion question : questions) {
-
-            AiGradeResponse grade =
-                    gradesByQuestionId.get(question.getId());
-
-            int score = normalizeScore(
-                    grade.score(),
-                    question.getMaxScore()
-            );
-
-            String answerText =
-                    submittedAnswers.getOrDefault(
-                            question.getId(),
-                            ""
-                    );
-
-            ExamAnswer answer = ExamAnswer.builder()
-                    .attempt(attempt)
-                    .question(question)
-                    .answerText(answerText)
-                    .score(score)
-                    .aiFeedback(grade.feedback())
-                    .build();
-
-            attempt.getAnswers().add(answer);
-
-            totalScore += score;
+            attempt.getAnswers().add(ExamAnswer.builder()
+                    .attempt(attempt).question(question)
+                    .answerText(submittedAnswers.getOrDefault(question.getId(), ""))
+                    .build());
         }
+        attempt.setTotalScore(null);
+        attempt.setFinishedAt(Instant.now()); // Time of submission, never time of grading.
+        attempt.setStatus(AttemptStatus.SUBMITTED);
+        return toResponse(examAttemptRepository.save(attempt));
+    }
 
+    @Transactional
+    public ExamAttemptResponse gradeWithAi(Long attemptId) {
+        ExamAttempt attempt = reviewableAttempt(attemptId);
+        if (attempt.getStatus() != AttemptStatus.SUBMITTED) {
+            throw new IllegalStateException("Работа уже проверена. Оценку можно изменить вручную");
+        }
+        List<String> chunks = getLessonChunks(attempt.getExam().getLesson().getId());
+        if (chunks.isEmpty()) {
+            throw new IllegalStateException("Нет проиндексированных материалов. Проверьте работу вручную или проиндексируйте материалы урока");
+        }
+        List<AiGradeQuestion> questions = attempt.getAnswers().stream()
+                .map(a -> new AiGradeQuestion(a.getQuestion().getId(), a.getQuestion().getQuestionText(),
+                        a.getQuestion().getMaxScore(), chunks)).toList();
+        List<ExamAnswerRequest> answers = attempt.getAnswers().stream()
+                .map(a -> new ExamAnswerRequest(a.getQuestion().getId(), a.getAnswerText())).toList();
+        List<AiGradeResponse> grades = aiServiceClient.gradeAttempt(new AiGradeAttemptRequest(questions, answers));
+        if (grades == null) throw new IllegalStateException("ИИ не вернул результаты проверки");
+        Map<Long, AiGradeResponse> byId = new HashMap<>();
+        Set<Long> expected = new HashSet<>();
+        attempt.getAnswers().forEach(a -> expected.add(a.getQuestion().getId()));
+        for (AiGradeResponse grade : grades) {
+            if (grade == null || grade.questionId() == null || !expected.contains(grade.questionId())
+                    || byId.putIfAbsent(grade.questionId(), grade) != null) {
+                throw new IllegalStateException("ИИ вернул некорректный список оценок");
+            }
+        }
+        if (!byId.keySet().equals(expected)) throw new IllegalStateException("ИИ проверил не все вопросы");
+        for (ExamAnswer answer : attempt.getAnswers()) {
+            AiGradeResponse grade = byId.get(answer.getQuestion().getId());
+            if (grade.score() == null || grade.score() < 0 || grade.score() > answer.getQuestion().getMaxScore()) {
+                throw new IllegalStateException("ИИ вернул оценку вне допустимого диапазона");
+            }
+        }
+        for (ExamAnswer answer : attempt.getAnswers()) {
+            AiGradeResponse grade = byId.get(answer.getQuestion().getId());
+            answer.setScore(grade.score());
+            answer.setAiFeedback(grade.feedback());
+        }
+        return finishReview(attempt);
+    }
+
+    @Transactional
+    public ExamAttemptResponse gradeManually(Long attemptId, List<ExamGradeRequest> grades) {
+        ExamAttempt attempt = reviewableAttempt(attemptId);
+        if (grades == null) throw new IllegalArgumentException("Укажите оценки по всем вопросам");
+        Map<Long, ExamGradeRequest> byId = new HashMap<>();
+        for (ExamGradeRequest grade : grades) {
+            if (grade == null || grade.questionId() == null || grade.score() == null
+                    || byId.putIfAbsent(grade.questionId(), grade) != null) {
+                throw new IllegalArgumentException("Некорректный или повторяющийся вопрос");
+            }
+        }
+        if (byId.size() != attempt.getAnswers().size()) throw new IllegalArgumentException("Оцените все вопросы");
+        for (ExamAnswer answer : attempt.getAnswers()) {
+            ExamGradeRequest grade = byId.get(answer.getQuestion().getId());
+            if (grade == null || grade.score() < 0 || grade.score() > answer.getQuestion().getMaxScore()
+                    || (grade.feedback() != null && grade.feedback().length() > 10000)) {
+                throw new IllegalArgumentException("Проверьте баллы и комментарии по вопросам");
+            }
+        }
+        for (ExamAnswer answer : attempt.getAnswers()) {
+            ExamGradeRequest grade = byId.get(answer.getQuestion().getId());
+            answer.setScore(grade.score());
+            // Existing column stores feedback from either the teacher or the AI.
+            answer.setAiFeedback(grade.feedback());
+        }
+        return finishReview(attempt);
+    }
+
+    private ExamAttempt reviewableAttempt(Long attemptId) {
+        ExamAttempt attempt = examAttemptRepository.findById(attemptId)
+                .orElseThrow(() -> new EntityNotFoundException("Попытка не найдена"));
+        if (!canReview(attempt, currentUser())) throw new AccessDeniedException("Проверять работу может преподаватель этого курса");
+        entityManager.lock(attempt, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+        entityManager.refresh(attempt);
+        if (attempt.getStatus() != AttemptStatus.SUBMITTED && attempt.getStatus() != AttemptStatus.FINISHED) {
+            throw new IllegalStateException("Работа ещё не отправлена на проверку или время попытки истекло");
+        }
+        if (attempt.getAnswers() == null || attempt.getAnswers().isEmpty()) {
+            throw new IllegalStateException("У попытки нет сохранённых ответов");
+        }
+        return attempt;
+    }
+
+    private boolean canReview(ExamAttempt attempt, User user) {
+        return Boolean.TRUE.equals(user.getIsEnabled())
+                && (user.getRole() == org.example.core.dto.enums.Role.ADMIN
+                    || (user.getRole() == org.example.core.dto.enums.Role.TEACHER
+                        && attempt.getExam().getLesson().getModule().getCourse().getTeacher().getId().equals(user.getId())));
+    }
+
+    private ExamAttemptResponse finishReview(ExamAttempt attempt) {
+        boolean firstReview = attempt.getStatus() == AttemptStatus.SUBMITTED;
+        int totalScore = attempt.getAnswers().stream().mapToInt(ExamAnswer::getScore).sum();
+        int maximum = attempt.getAnswers().stream().mapToInt(a -> a.getQuestion().getMaxScore()).sum();
         attempt.setTotalScore(totalScore);
-        attempt.setFinishedAt(Instant.now());
         attempt.setStatus(AttemptStatus.FINISHED);
-
-        ExamAttempt saved =
-                examAttemptRepository.save(attempt);
-
-        /*
-         * Попытка успешно завершена.
-         * Отправляем событие в Notification Service через RabbitMQ.
-         */
-        int maximumScore = questions.stream().mapToInt(ExamQuestion::getMaxScore).sum();
+        ExamAttempt saved = examAttemptRepository.save(attempt);
         if (passPercent < 1 || passPercent > 100) throw new IllegalStateException("exam.pass-percent должен быть 1..100");
-        if (maximumScore > 0 && totalScore * 100L >= maximumScore * (long) passPercent) {
-        eventPublisher.publishExamPassed(
-                new ExamPassedEvent(
-                        user.getId(),
-                        exam.getId(),
-                        saved.getId(),
-                        totalScore
-                )
-        );
-
+        // Edits update results without sending repeated exam-passed notifications.
+        if (firstReview && maximum > 0 && totalScore * 100L >= maximum * (long) passPercent) {
+            eventPublisher.publishExamPassed(new ExamPassedEvent(attempt.getUser().getId(),
+                    attempt.getExam().getId(), attempt.getId(), totalScore));
         }
         return toResponse(saved);
     }
@@ -549,25 +505,6 @@ public class ExamService {
         }
     }
 
-    private int normalizeScore(
-            Integer score,
-            Integer maxScore
-    ) {
-
-        if (score == null) {
-            return 0;
-        }
-
-        if (maxScore == null || maxScore <= 0) {
-            return Math.max(score, 0);
-        }
-
-        return Math.max(
-                0,
-                Math.min(score, maxScore)
-        );
-    }
-
     private List<String> getLessonChunks(Long lessonId) {
 
         return jdbcTemplate.query(
@@ -663,7 +600,8 @@ public class ExamService {
                 attempt.getFinishedAt(),
                 attempt.getTotalScore(),
                 attempt.getStatus().name(),
-                answers
+                answers,
+                canReview(attempt, currentUser())
         );
     }
 

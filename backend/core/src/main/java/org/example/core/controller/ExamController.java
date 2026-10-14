@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.example.core.dto.request.ExamAnswerRequest;
 import org.example.core.dto.request.ExamRequest;
+import org.example.core.dto.request.ExamGradeRequest;
 import org.example.core.dto.response.ExamAttemptResponse;
 import org.example.core.dto.response.ExamQuestionResponse;
 import org.example.core.dto.response.ExamResponse;
@@ -70,6 +71,19 @@ public class ExamController {
                 attemptId,
                 answers
         );
+    }
+
+    @PostMapping("/attempts/{attemptId}/grade-ai")
+    @PreAuthorize("hasAnyRole('TEACHER','ADMIN')")
+    public ExamAttemptResponse gradeWithAi(@PathVariable Long attemptId) {
+        return examService.gradeWithAi(attemptId);
+    }
+
+    @PostMapping("/attempts/{attemptId}/grade-manual")
+    @PreAuthorize("hasAnyRole('TEACHER','ADMIN')")
+    public ExamAttemptResponse gradeManually(@PathVariable Long attemptId,
+                                             @RequestBody List<ExamGradeRequest> grades) {
+        return examService.gradeManually(attemptId, grades);
     }
 
     @GetMapping("/attempts/{attemptId}")

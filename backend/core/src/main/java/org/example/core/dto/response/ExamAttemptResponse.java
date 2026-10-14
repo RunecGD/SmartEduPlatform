@@ -10,6 +10,7 @@ public record ExamAttemptResponse(
         Instant finishedAt,
         Integer totalScore,
         String status,
-        List<ExamAnswerResponse> answers
+        List<ExamAnswerResponse> answers,
+        boolean canReview
 ) {
 }

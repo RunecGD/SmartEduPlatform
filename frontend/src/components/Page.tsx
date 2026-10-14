@@ -10,4 +10,4 @@ export function useRouteId(key:string) {const value = Number(useParams()[key]);r
 export function InvalidId() {return <Unavailable title="Некорректный адрес" message="Проверьте ссылку на страницу."/>;}
 export const dateLabel = (value: string | null) => {if(!value)return '—';const date = new Date(value);return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat('ru-RU',{dateStyle:'medium'}).format(date);};
 export const numberLabel = (value: number | null | undefined, suffix = '') => value == null ? '—' : `${new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1}).format(value)}${suffix}`;
-export const statusLabel = (status:string) => ({DRAFT:'Черновик',PUBLISHED:'Опубликован',ARCHIVED:'В архиве',IN_PROGRESS:'В процессе',FINISHED:'Завершено',EXPIRED:'Время истекло'}[status] ?? status);
+export const statusLabel = (status:string) => ({DRAFT:'Черновик',PUBLISHED:'Опубликован',ARCHIVED:'В архиве',IN_PROGRESS:'В процессе',SUBMITTED:'Ожидает проверки',FINISHED:'Проверено',EXPIRED:'Время истекло'}[status] ?? status);
