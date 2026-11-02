@@ -1,6 +1,7 @@
 package com.example.notificationservice.listener;
 
 import com.example.notificationservice.dto.ExamPassedEvent;
+import com.example.notificationservice.dto.ExamSubmittedEvent;
 import com.example.notificationservice.dto.ForumAnsweredEvent;
 import com.example.notificationservice.dto.ForumReplyEvent;
 import com.example.notificationservice.dto.UserEnrolledEvent;
@@ -14,6 +15,11 @@ import org.springframework.stereotype.Component;
 public class NotificationEventListener {
 
     private final NotificationService notificationService;
+
+    @RabbitListener(queues = "notification.exam-submitted")
+    public void handleExamSubmitted(ExamSubmittedEvent event) {
+        notificationService.createExamSubmittedNotification(event);
+    }
 
     @RabbitListener(queues = "notification.exam-passed")
     public void handleExamPassed(ExamPassedEvent event) {

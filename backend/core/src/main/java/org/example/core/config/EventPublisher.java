@@ -23,6 +23,8 @@ public class EventPublisher {
     public void publishForumAnswered(ForumAnsweredEvent event) { enqueue("forum.answered",event); }
     @Transactional(propagation = Propagation.MANDATORY)
     public void publishForumReply(ForumReplyEvent event) { enqueue("forum.reply",event); }
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void publishExamSubmitted(ExamSubmittedEvent event) { enqueue("exam.submitted",event); }
     private void enqueue(String routingKey,Object event) {
         byte[] body=jacksonMessageConverter.toMessage(event,new MessageProperties()).getBody();
         jdbcTemplate.update("INSERT INTO smartedu_jobs(id,kind,routing_key,payload) VALUES (?,'EVENT',?,?)",

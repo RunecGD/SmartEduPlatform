@@ -24,10 +24,13 @@ public class NotificationService {
     private final MongoTemplate mongoTemplate;
 
     private void create(String id,Long userId,NotificationType type,String message) {
+        create(id,userId,type,message,null);
+    }
+    private void create(String id,Long userId,NotificationType type,String message,String targetUrl) {
         if (userId==null || userId<=0) throw new IllegalArgumentException("Некорректный userId события");
         Query query=Query.query(Criteria.where("_id").is(id));
         Update update=new Update().setOnInsert("userId",userId).setOnInsert("type",type)
-                .setOnInsert("message",message).setOnInsert("read",false)
+                .setOnInsert("message",message).setOnInsert("targetUrl",targetUrl).setOnInsert("read",false)
                 .setOnInsert("createdAt",LocalDateTime.now(ZoneOffset.UTC));
         try {
             Notification previous=mongoTemplate.findAndModify(query,update,
@@ -39,6 +42,15 @@ public class NotificationService {
             try { webSocketService.sendNotification(NotificationResponse.from(saved)); }
             catch (RuntimeException ex) { log.warn("Realtime delivery failed; notification retained"); }
         }
+    }
+    public void createExamSubmittedNotification(ExamSubmittedEvent event) {
+        if (event.attemptId()==null || event.attemptId()<=0) throw new IllegalArgumentException("Нет attemptId");
+        String student = event.studentName()==null || event.studentName().isBlank() ? "Ученик" : event.studentName();
+        String exam = event.examTitle()==null || event.examTitle().isBlank() ? "Экзамен" : event.examTitle();
+        String course = event.courseTitle()==null || event.courseTitle().isBlank() ? "" : " Курс: «"+event.courseTitle()+"».";
+        create("submitted:"+event.userId()+":"+event.attemptId(),event.userId(),NotificationType.EXAM_SUBMITTED,
+                student+" отправил(а) экзамен «"+exam+"» на проверку."+course,
+                "/exams/attempts/"+event.attemptId());
     }
     public void createExamPassedNotification(ExamPassedEvent event) {
         if (event.attemptId()==null || event.examId()==null || event.score()==null || event.score()<0) {

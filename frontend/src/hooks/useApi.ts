@@ -20,7 +20,12 @@ function useCoreMutation<T, R>(mutationFn: (value: T) => Promise<R>, key: string
 }
 export const useCreateCourse = () => useCoreMutation((data: CourseRequest) => coursesApi.create(data),'courses');
 export const usePublishCourse = () => useCoreMutation(coursesApi.publish,'courses');
-export const useEnrollment = () => useCoreMutation(coursesApi.enroll,'courses');
+export const useEnrollment = () => {
+  const client = useQueryClient();
+  return useMutation({mutationFn:coursesApi.enroll,onSuccess:async () => {
+    await Promise.all([client.invalidateQueries({queryKey:['courses']}),client.invalidateQueries({queryKey:['progress']})]);
+  }});
+};
 export const useAddModule = (id: number) => useCoreMutation((data: CourseModuleRequest) => coursesApi.addModule(id,data),'courses');
 export const useAddLesson = <T extends LessonType>(id: number) => useCoreMutation((data: LessonRequest<T>) => coursesApi.addLesson(id,data),'courses');
 export const useCompleteLesson = () => useCoreMutation((data: LessonProgressRequest) => coursesApi.completeLesson(data),'progress');
@@ -41,5 +46,11 @@ export const useAsk = (id: number) => useMutation({mutationFn: (data: AskRequest
 export const useUploadMaterial = (id: number) => useCoreMutation((file: File) => materialsApi.upload(id,file),'courses');
 export const useDownloadMaterial = () => useMutation({mutationFn: materialsApi.download});
 export const useExecuteCode = () => useMutation({mutationFn: executionApi.execute});
-export const useNotifications = (id: number) => useQuery({queryKey: ['notifications',id], queryFn: ({signal}) => notificationsApi.list(id,signal)});
-export const useReadNotification = (userId: number) => useCoreMutation((id: string) => notificationsApi.markRead(id,userId),'notifications');
+export const useNotifications = (id: number) => useQuery({queryKey: ['notifications',id], queryFn: ({signal}) => notificationsApi.list(id,signal),enabled:id>0,refetchInterval:30000});
+export const useReadNotification = (userId: number) => {
+  const client = useQueryClient();
+  return useMutation({mutationFn:(id:string)=>notificationsApi.markRead(id,userId),onSuccess:updated=>{
+    client.setQueryData<Awaited<ReturnType<typeof notificationsApi.list>>>(['notifications',userId],old=>old?.map(n=>n.id===updated.id ? updated : n));
+    void client.invalidateQueries({queryKey:['notifications',userId]});
+  }});
+};

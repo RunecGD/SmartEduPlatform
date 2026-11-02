@@ -288,7 +288,11 @@ public class ExamService {
         attempt.setTotalScore(null);
         attempt.setFinishedAt(Instant.now()); // Time of submission, never time of grading.
         attempt.setStatus(AttemptStatus.SUBMITTED);
-        return toResponse(examAttemptRepository.save(attempt));
+        ExamAttempt saved = examAttemptRepository.save(attempt);
+        Course course = exam.getLesson().getModule().getCourse();
+        eventPublisher.publishExamSubmitted(new ExamSubmittedEvent(course.getTeacher().getId(),
+                saved.getId(), user.getFullName(), exam.getTitle(), course.getTitle()));
+        return toResponse(saved);
     }
 
     @Transactional

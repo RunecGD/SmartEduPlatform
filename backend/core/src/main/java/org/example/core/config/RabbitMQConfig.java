@@ -28,5 +28,9 @@ public class RabbitMQConfig {
     @Bean public Binding forumReplyBinding(@org.springframework.beans.factory.annotation.Qualifier("forumReplyQueue") Queue queue) {
         return BindingBuilder.bind(queue).to(smartEduExchange()).with("forum.reply");
     }
+    @Bean public Queue examSubmittedQueue() { return new Queue("notification.exam-submitted",true); }
+    @Bean public Binding examSubmittedBinding(@org.springframework.beans.factory.annotation.Qualifier("examSubmittedQueue") Queue queue) {
+        return BindingBuilder.bind(queue).to(smartEduExchange()).with("exam.submitted");
+    }
     @Bean public JacksonJsonMessageConverter jacksonMessageConverter() { return new JacksonJsonMessageConverter(); }
 }

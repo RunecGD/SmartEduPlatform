@@ -24,6 +24,14 @@ export function useExamTimer(attemptId:number|null){
 }
 export function useNotificationRealtime(userId:number){
  const cache=useQueryClient();
- const receive=useCallback((body:string)=>{try{const result=notificationSchema.safeParse(JSON.parse(body));if(result.success && result.data.userId===userId)void cache.invalidateQueries({queryKey:['notifications',userId]});}catch{}},[cache,userId]);
- return useStomp(import.meta.env.VITE_NOTIFICATION_WS_URL,`/topic/notifications/${userId}`,receive);
+ const receive=useCallback((body:string)=>{try{
+  const result=notificationSchema.safeParse(JSON.parse(body));
+  if(result.success && result.data.userId===userId){
+   void cache.invalidateQueries({queryKey:['notifications',userId]});
+   if(result.data.type==='EXAM_SUBMITTED')void cache.invalidateQueries({queryKey:['results']});
+  }
+ }catch{}},[cache,userId]);
+ const connected=useStomp(import.meta.env.VITE_NOTIFICATION_WS_URL,userId>0 ? `/topic/notifications/${userId}` : null,receive);
+ useEffect(()=>{if(connected && userId>0)void cache.invalidateQueries({queryKey:['notifications',userId]});},[connected,userId,cache]);
+ return connected;
 }

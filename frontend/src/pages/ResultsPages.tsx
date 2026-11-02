@@ -24,15 +24,25 @@ export function ResultsPage({ group = false }: { group?: boolean }) {
 }
 function Results({ id, group }: { id: number; group: boolean }) {
   const [search, setSearch] = useState('');
-  const query = useQuery({ queryKey: ['results', group ? 'group' : 'course', id], queryFn: () => group ? managementApi.groupResults(id) : managementApi.courseResults(id) });
+  const query = useQuery({ queryKey: ['results', group ? 'group' : 'course', id], queryFn: () => group ? managementApi.groupResults(id) : managementApi.courseResults(id), refetchInterval:30000 });
   const groups = useQuery({ queryKey: ['groups'], queryFn: managementApi.groups, enabled: group });
   if (query.isLoading) return <Loading/>;
   if (query.error) return <QueryError error={query.error} retry={() => void query.refetch()}/>;
   const students = query.data ?? [];
   const filtered = students.filter(s => `${s.fullName} ${s.email}`.toLowerCase().includes(search.toLowerCase()));
+  const pending=students.flatMap(student=>student.courses.flatMap(course=>course.attempts
+    .filter(attempt=>attempt.status==='SUBMITTED')
+    .map(attempt=>({student,courseTitle:course.progress.courseTitle,attempt}))))
+    .sort((a,b)=>(a.attempt.finishedAt ?? '').localeCompare(b.attempt.finishedAt ?? ''));
   const title = group ? groups.data?.find(g => g.id === id)?.name : students[0]?.courses[0]?.progress.courseTitle;
   return <><Back to={group ? '/groups' : `/courses/${id}`}>{group ? 'К группам' : 'К курсу'}</Back>
-    <PageHeading eyebrow="РЕЗУЛЬТАТЫ УЧЕНИКОВ" title={title || (group ? `Группа #${id}` : `Курс #${id}`)} description={group ? 'Все курсы учеников этой группы.' : 'Прогресс и экзамены только по этому курсу.'}/>
+    <PageHeading eyebrow="РЕЗУЛЬТАТЫ УЧЕНИКОВ" title={title || (group ? 'Результаты группы' : 'Результаты курса')} description={group ? 'Все курсы учеников этой группы.' : 'Прогресс и экзамены только по этому курсу.'}/>
+    <section className="panel mb-6"><div className="section-heading"><h2>Ожидают проверки</h2><span className="status-tag">{pending.length}</span></div>
+      <p className="text-sm text-muted-foreground mb-3">{group ? 'Отправленные работы учеников этой группы. Проверяет преподаватель соответствующего курса.' : 'Все отправленные, но ещё не проверенные работы этого курса.'}</p>
+      {!pending.length ? <p>Непроверенных экзаменов нет.</p> : <div className="table-scroll"><table className="management-table"><thead><tr><th>Ученик</th><th>Курс</th><th>Экзамен</th><th>Отправлен</th><th>Работа</th></tr></thead><tbody>
+        {pending.map(({student,courseTitle,attempt})=><tr key={attempt.attemptId}><td>{student.fullName}<div className="text-sm text-muted-foreground">{student.email}</div></td><td>{courseTitle || 'Курс'}</td><td>{attempt.examTitle || 'Экзамен'}</td><td>{dateLabel(attempt.finishedAt)}</td><td><Link className="text-primary underline" to={`/exams/attempts/${attempt.attemptId}`}>{group ? 'Открыть' : 'Проверить'}</Link></td></tr>)}
+      </tbody></table></div>}
+    </section>
     <Input className="max-w-lg mb-5" aria-label="Найти ученика" placeholder="Имя или email ученика" value={search} onChange={e => setSearch(e.target.value)}/>
     <p className="results-caption">Учеников: {filtered.length}</p>
     {!filtered.length ? <Unavailable title="Ученики не найдены" message={search ? 'Измените поисковый запрос.' : 'Здесь появятся ученики после назначения в группу или записи на курс.'}/> :

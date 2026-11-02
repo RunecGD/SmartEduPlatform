@@ -28,6 +28,8 @@ public class Notification {
 
     private String message;
 
+    private String targetUrl;
+
     @Builder.Default
     private Boolean read = false;
 

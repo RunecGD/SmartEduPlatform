@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { request, id } from './axios';
 import type { CodeExecutionRequest } from '../types/services';
-export const notificationSchema = z.object({ id: z.string(), userId: z.number().int(), type: z.enum(['EXAM_PASSED','USER_ENROLLED','FORUM_REPLY']), message: z.string(), read: z.boolean().nullable(), createdAt: z.string().nullable() });
+export const notificationSchema = z.object({ id: z.string(), userId: z.number().int(), type: z.enum(['EXAM_PASSED','EXAM_SUBMITTED','USER_ENROLLED','FORUM_REPLY']), message: z.string(), read: z.boolean().nullable(), createdAt: z.string().nullable(), targetUrl: z.string().nullable().optional() });
 const executionSchema = z.object({ status: z.enum(['SUCCESS','COMPILATION_ERROR','RUNTIME_ERROR','TIME_LIMIT_EXCEEDED','INTERNAL_ERROR']), stdout: z.string().nullable(), stderr: z.string().nullable(), exitCode: z.number().int().nullable(), executionTimeMs: z.number().nullable() });
 export const notificationsApi = {
   list: async (userId: number, signal?: AbortSignal) => z.array(notificationSchema).parse(await request('notifications', { url: `/api/v1/notifications/user/${id(userId)}`, signal })),
